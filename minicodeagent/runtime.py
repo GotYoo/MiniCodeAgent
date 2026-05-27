@@ -165,6 +165,7 @@ class MiniCodeAgent:
         self.last_durable_rejections = []
         self.last_durable_superseded = []
         self._last_tool_result_metadata = {}
+        self._current_run_tool_events = []
         self._last_prefix_refresh = {
             "workspace_changed": False,
             "prefix_changed": False,
@@ -811,6 +812,7 @@ class MiniCodeAgent:
         这里就是最关键的入口。
         """
         run_started_at = time.monotonic()
+        self._current_run_tool_events = []
         self.memory.set_task_summary(user_message)
         self.record({"role": "user", "content": user_message, "created_at": now()})
 
@@ -948,17 +950,15 @@ class MiniCodeAgent:
                     }
                 )
                 self.run_store.write_task_state(task_state)
-                self.emit_trace(
-                    task_state,
-                    "tool_executed",
-                    {
-                        "name": name,
-                        "args": args,
-                        "result": clip(result, 500),
-                        "duration_ms": int((time.monotonic() - tool_started_at) * 1000),
-                        **dict(self._last_tool_result_metadata or {}),
-                    },
-                )
+                tool_event = {
+                    "name": name,
+                    "args": args,
+                    "result": clip(result, 500),
+                    "duration_ms": int((time.monotonic() - tool_started_at) * 1000),
+                    **dict(self._last_tool_result_metadata or {}),
+                }
+                self._current_run_tool_events.append(tool_event)
+                self.emit_trace(task_state, "tool_executed", tool_event)
                 checkpoint = self.create_checkpoint(task_state, user_message, trigger="tool_executed")
                 self.run_store.write_task_state(task_state)
                 self.emit_trace(
@@ -1234,9 +1234,98 @@ class MiniCodeAgent:
     def new_run_id():
         return "run_" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
 
+    @staticmethod
+    def ordered_unique(values):
+        result = []
+        seen = set()
+        for value in values:
+            item = str(value or "").strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            result.append(item)
+        return result
+
+    @staticmethod
+    def count_values(values):
+        counts = {}
+        for value in values:
+            item = str(value or "").strip()
+            if not item:
+                continue
+            counts[item] = counts.get(item, 0) + 1
+        return counts
+
+    def summarize_run_tools(self):
+        events = list(getattr(self, "_current_run_tool_events", []) or [])
+        requested = self.ordered_unique(event.get("name") for event in events)
+        used_events = [event for event in events if event.get("tool_status") != "rejected"]
+        safe_used = [
+            event.get("name")
+            for event in used_events
+            if event.get("risk_level") == "low" or not toolkit.is_risky_tool(str(event.get("name", "")))
+        ]
+        risky_events = [
+            event
+            for event in events
+            if event.get("risk_level") == "high" or toolkit.is_risky_tool(str(event.get("name", "")))
+        ]
+        risky_allowed = [
+            event.get("name")
+            for event in risky_events
+            if event.get("approval_required") and event.get("approval_allowed") and event.get("tool_status") != "rejected"
+        ]
+        files_read = []
+        files_modified = []
+        shell_commands = []
+        compact_events = []
+        for event in events:
+            response = event.get("tool_response") if isinstance(event.get("tool_response"), dict) else {}
+            data = response.get("data") if isinstance(response.get("data"), dict) else {}
+            name = str(event.get("name", ""))
+            if name == "read_file" and data.get("path"):
+                files_read.append(data.get("path"))
+            if event.get("workspace_changed"):
+                files_modified.extend(event.get("affected_paths") or [])
+            elif name in {"write_file", "patch_file"} and data.get("path") and event.get("tool_status") != "rejected":
+                files_modified.append(data.get("path"))
+            if name == "run_shell":
+                command = data.get("command")
+                if command:
+                    shell_commands.append(command)
+            compact_events.append(
+                {
+                    "name": name,
+                    "status": str(event.get("tool_status", "")),
+                    "error_code": str(event.get("tool_error_code", "")),
+                    "risk_level": str(event.get("risk_level", "")),
+                    "duration_ms": int(event.get("duration_ms") or 0),
+                    "affected_paths": list(event.get("affected_paths") or []),
+                    "workspace_changed": bool(event.get("workspace_changed")),
+                    "security_event_type": str(event.get("security_event_type", "")),
+                }
+            )
+
+        return {
+            "tools_requested": requested,
+            "tools_used": self.ordered_unique(event.get("name") for event in used_events),
+            "safe_tools_used": self.ordered_unique(safe_used),
+            "risky_tools_requested": self.ordered_unique(event.get("name") for event in risky_events),
+            "risky_tools_allowed": self.ordered_unique(risky_allowed),
+            "approval_denied_count": sum(1 for event in events if event.get("security_event_type") == "approval_denied"),
+            "read_only_blocked_count": sum(1 for event in events if event.get("security_event_type") == "read_only_block"),
+            "files_read": self.ordered_unique(files_read),
+            "files_modified": self.ordered_unique(files_modified),
+            "shell_commands": self.ordered_unique(shell_commands),
+            "tool_status_counts": self.count_values(event.get("tool_status") for event in events),
+            "tool_error_code_counts": self.count_values(event.get("tool_error_code") for event in events),
+            "tool_events": compact_events,
+        }
+
     def build_report(self, task_state):
         # report 是一次运行的最终摘要；
         # 和 trace 的区别在于，trace 关注过程，report 关注结果与关键指标。
+        tool_summary = self.summarize_run_tools()
         return {
             "run_id": task_state.run_id,
             "task_id": task_state.task_id,
@@ -1253,6 +1342,7 @@ class MiniCodeAgent:
             "durable_rejections": list(self.last_durable_rejections),
             "durable_superseded": list(self.last_durable_superseded),
             "redacted_env": self.detected_secret_env_summary(),
+            **tool_summary,
         }
 
     def tool_example(self, name):

@@ -878,6 +878,67 @@ def test_successful_run_persists_run_artifacts_and_stop_reason(tmp_path):
     assert "tool_executed" in trace_events
 
 
+def test_run_report_summarizes_tool_usage_security_and_file_effects(tmp_path):
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":1}}</tool>',
+            '<tool>{"name":"write_file","args":{"path":"notes.txt","content":"hello\\n"}}</tool>',
+            '<tool>{"name":"run_shell","args":{"command":"echo blocked","timeout":20}}</tool>',
+            "<final>Finished.</final>",
+        ],
+        approval_policy="never",
+    )
+
+    assert agent.ask("Inspect and modify files") == "Finished."
+
+    report = json.loads(agent.run_store.report_path(agent.current_task_state).read_text(encoding="utf-8"))
+
+    assert report["tools_requested"] == ["read_file", "write_file", "run_shell"]
+    assert report["tools_used"] == ["read_file"]
+    assert report["safe_tools_used"] == ["read_file"]
+    assert report["risky_tools_requested"] == ["write_file", "run_shell"]
+    assert report["risky_tools_allowed"] == []
+    assert report["approval_denied_count"] == 2
+    assert report["read_only_blocked_count"] == 0
+    assert report["files_read"] == ["README.md"]
+    assert report["files_modified"] == []
+    assert report["tool_status_counts"] == {"ok": 1, "rejected": 2}
+    assert report["tool_error_code_counts"] == {"approval_denied": 2}
+    assert report["tool_events"] == [
+        {
+            "name": "read_file",
+            "status": "ok",
+            "error_code": "",
+            "risk_level": "low",
+            "duration_ms": report["tool_events"][0]["duration_ms"],
+            "affected_paths": [],
+            "workspace_changed": False,
+            "security_event_type": "",
+        },
+        {
+            "name": "write_file",
+            "status": "rejected",
+            "error_code": "approval_denied",
+            "risk_level": "high",
+            "duration_ms": report["tool_events"][1]["duration_ms"],
+            "affected_paths": [],
+            "workspace_changed": False,
+            "security_event_type": "approval_denied",
+        },
+        {
+            "name": "run_shell",
+            "status": "rejected",
+            "error_code": "approval_denied",
+            "risk_level": "high",
+            "duration_ms": report["tool_events"][2]["duration_ms"],
+            "affected_paths": [],
+            "workspace_changed": False,
+            "security_event_type": "approval_denied",
+        },
+    ]
+
+
 def test_trace_and_report_redact_secret_env_values(tmp_path):
     secret = "sk-test-secret-123"
     with patch.dict(os.environ, {"OPENAI_API_KEY": secret}, clear=True):
@@ -1188,6 +1249,10 @@ def test_write_file_trace_records_minimum_tool_contract_fields(tmp_path):
     assert tool_event["affected_paths"] == ["notes.txt"]
     assert tool_event["workspace_changed"] is True
     assert tool_event["diff_summary"] == ["created:notes.txt"]
+
+    report = json.loads(agent.run_store.report_path(agent.current_task_state).read_text(encoding="utf-8"))
+    assert report["risky_tools_allowed"] == ["write_file"]
+    assert report["files_modified"] == ["notes.txt"]
 
 
 def test_resume_marks_schema_mismatch_when_checkpoint_version_is_incompatible(tmp_path):
