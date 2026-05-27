@@ -14,6 +14,9 @@ from functools import partial
 from .tool_protocol import partial_response, success_response
 from .workspace import IGNORED_PATH_NAMES, clip
 
+SAFE_TOOLS = frozenset({"list_files", "read_file", "search", "delegate"})
+RISKY_TOOLS = frozenset({"run_shell", "write_file", "patch_file"})
+
 BASE_TOOL_SPECS = {
     "list_files": {
         "schema": {"path": "str='.'"},
@@ -47,6 +50,14 @@ BASE_TOOL_SPECS = {
     },
 }
 
+
+def is_risky_tool(name):
+    return str(name) in RISKY_TOOLS
+
+
+def tool_risk_level(name):
+    return "high" if is_risky_tool(name) else "low"
+
 DELEGATE_TOOL_SPEC = {
     "schema": {"task": "str", "max_steps": "int=3"},
     "risky": False,
@@ -68,13 +79,18 @@ def build_tool_registry(agent):
     # 工具不是动态发现的，而是显式注册的。
     # 这样模型看到的是一个有边界、可审计的动作集合。
     tools = {
-        name: {**spec, "run": partial(_TOOL_RUNNERS[name], agent)}
+        name: {**spec, "risky": is_risky_tool(name), "risk_level": tool_risk_level(name), "run": partial(_TOOL_RUNNERS[name], agent)}
         for name, spec in BASE_TOOL_SPECS.items()
     }
     # 子 agent 是刻意做成受限能力的：一旦深度耗尽，
     # 就连 delegate 这个工具都不再暴露给模型。
     if agent.depth < agent.max_depth:
-        tools["delegate"] = {**DELEGATE_TOOL_SPEC, "run": partial(tool_delegate, agent)}
+        tools["delegate"] = {
+            **DELEGATE_TOOL_SPEC,
+            "risky": is_risky_tool("delegate"),
+            "risk_level": tool_risk_level("delegate"),
+            "run": partial(tool_delegate, agent),
+        }
     return tools
 
 

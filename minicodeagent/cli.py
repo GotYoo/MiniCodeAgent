@@ -235,6 +235,7 @@ def build_agent(args):
             session_store=store,
             session_id=session_id,
             approval_policy=args.approval,
+            read_only=getattr(args, "read_only", False),
             max_steps=args.max_steps,
             max_new_tokens=args.max_new_tokens,
             secret_env_names=configured_secret_names,
@@ -244,6 +245,7 @@ def build_agent(args):
         workspace=workspace,
         session_store=store,
         approval_policy=args.approval,
+        read_only=getattr(args, "read_only", False),
         max_steps=args.max_steps,
         max_new_tokens=args.max_new_tokens,
         secret_env_names=configured_secret_names,
@@ -269,6 +271,7 @@ def build_arg_parser():
     parser.add_argument("--openai-timeout", type=int, default=300, help="OpenAI-compatible request timeout in seconds.")
     parser.add_argument("--resume", default=None, help="Session id to resume or 'latest'.")
     parser.add_argument("--approval", choices=("ask", "auto", "never"), default="ask", help="Approval policy for risky tools.")
+    parser.add_argument("--read-only", action="store_true", help="Block all risky tools, regardless of approval policy.")
     parser.add_argument(
         "--secret-env-name",
         dest="secret_env_names",

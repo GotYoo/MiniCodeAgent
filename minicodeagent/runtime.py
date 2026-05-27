@@ -340,6 +340,14 @@ class MiniCodeAgent:
             )
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
+    def approval_context(self, name, tool):
+        return {
+            "tool": str(name),
+            "risk_level": str(tool.get("risk_level") or ("high" if tool.get("risky") else "low")),
+            "approval_policy": self.approval_policy,
+            "read_only_mode": bool(self.read_only),
+        }
+
     def build_prefix(self):
         tool_lines = []
         for name, tool in self.tools.items():
@@ -365,6 +373,9 @@ class MiniCodeAgent:
 
             Rules:
             - Use tools instead of guessing about the workspace.
+            - Current approval policy: {self.approval_policy}.
+            - Read-only mode: {"enabled" if self.read_only else "disabled"}.
+            - Tools marked [approval required] may be rejected by policy; choose safe read/search tools when possible.
             - Return exactly one <tool>...</tool> or one <final>...</final>.
             - Tool calls must look like:
               <tool>{{"name":"tool_name","args":{{...}}}}</tool>
@@ -1108,18 +1119,24 @@ class MiniCodeAgent:
             }
             return response_text(response)
         if tool["risky"] and not self.approve(name, args):
+            approval_context = self.approval_context(name, tool)
+            blocked_by_read_only = bool(self.read_only)
             response = error_response(
-                code=ErrorCode.READ_ONLY_BLOCKED if self.read_only else ErrorCode.APPROVAL_DENIED,
-                message=f"error: approval denied for {name}",
+                code=ErrorCode.READ_ONLY_BLOCKED if blocked_by_read_only else ErrorCode.APPROVAL_DENIED,
+                message=f"error: {'read-only mode blocked' if blocked_by_read_only else 'approval denied for'} {name}",
                 params_input=args,
+                context=approval_context,
             )
             self._last_tool_result_metadata = {
                 "tool_status": "rejected",
-                "tool_error_code": "approval_denied",
+                "tool_error_code": "read_only_blocked" if blocked_by_read_only else "approval_denied",
                 "tool_response": response,
-                "security_event_type": "read_only_block" if self.read_only else "approval_denied",
+                "security_event_type": "read_only_block" if blocked_by_read_only else "approval_denied",
                 "risk_level": "high",
-                "read_only": False,
+                "read_only": blocked_by_read_only,
+                "approval_policy": self.approval_policy,
+                "approval_required": True,
+                "approval_allowed": False,
                 "affected_paths": [],
                 "workspace_changed": False,
                 "diff_summary": [],
@@ -1165,6 +1182,9 @@ class MiniCodeAgent:
                 "security_event_type": "",
                 "risk_level": "high" if tool["risky"] else "low",
                 "read_only": not tool["risky"],
+                "approval_policy": self.approval_policy,
+                "approval_required": bool(tool["risky"]),
+                "approval_allowed": bool(tool["risky"]),
                 "affected_paths": affected_paths,
                 "workspace_changed": workspace_changed,
                 "workspace_fingerprint": self.workspace.fingerprint(),

@@ -8,7 +8,7 @@ import pytest
 from minicodeagent import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
 from minicodeagent import cli as mini_cli
 from minicodeagent.task_state import TaskState
-from minicodeagent.tool_protocol import response_text
+from minicodeagent.tool_protocol import ErrorCode, response_text
 
 
 def build_workspace(tmp_path):
@@ -58,6 +58,37 @@ def test_risky_tool_deny_behavior(tmp_path):
     result = agent.run_tool("run_shell", {"command": "echo hi", "timeout": 20})
 
     assert result == "error: approval denied for run_shell"
+    metadata = agent._last_tool_result_metadata
+    assert metadata["security_event_type"] == "approval_denied"
+    assert metadata["approval_policy"] == "never"
+    assert metadata["approval_required"] is True
+    assert metadata["approval_allowed"] is False
+    assert metadata["tool_response"]["error"]["code"] == ErrorCode.APPROVAL_DENIED.value
+    assert metadata["tool_response"]["context"]["risk_level"] == "high"
+
+
+def test_read_only_blocks_risky_tool_with_specific_error(tmp_path):
+    agent = build_agent(tmp_path, [], approval_policy="auto", read_only=True)
+
+    result = agent.run_tool("write_file", {"path": "blocked.txt", "content": "nope"})
+
+    assert result == "error: read-only mode blocked write_file"
+    assert not (tmp_path / "blocked.txt").exists()
+    metadata = agent._last_tool_result_metadata
+    assert metadata["security_event_type"] == "read_only_block"
+    assert metadata["tool_error_code"] == "read_only_blocked"
+    assert metadata["read_only"] is True
+    assert metadata["tool_response"]["error"]["code"] == ErrorCode.READ_ONLY_BLOCKED.value
+    assert metadata["tool_response"]["context"]["approval_policy"] == "auto"
+
+
+def test_read_only_allows_safe_read_tool(tmp_path):
+    agent = build_agent(tmp_path, [], approval_policy="never", read_only=True)
+
+    result = agent.run_tool("read_file", {"path": "README.md"})
+
+    assert "# README.md" in result
+    assert agent._last_tool_result_metadata["risk_level"] == "low"
 
 
 def test_cli_build_agent_wires_secret_env_names_from_parser(tmp_path):
@@ -88,6 +119,24 @@ def test_cli_build_agent_wires_secret_env_names_from_parser(tmp_path):
         )
         agent = mini_cli.build_agent(args)
         assert set(agent.secret_env_summary()["secret_env_names"]) == {"GITHUB_PAT", "GH_PAT"}
+
+
+def test_cli_build_agent_wires_read_only_flag(tmp_path):
+    class DummyModelClient:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+        def complete(self, prompt, max_new_tokens):
+            raise AssertionError("model should not be invoked")
+
+    (tmp_path / "README.md").write_text("demo\n", encoding="utf-8")
+    with patch.dict(os.environ, {}, clear=True), patch("minicodeagent.cli.OllamaModelClient", DummyModelClient):
+        args = mini_cli.build_arg_parser().parse_args(["--cwd", str(tmp_path), "--provider", "ollama", "--read-only"])
+        agent = mini_cli.build_agent(args)
+
+    assert agent.read_only is True
+    assert "Read-only mode: enabled" in agent.prefix
 
 
 def test_cli_build_agent_uses_default_configured_secret_names(tmp_path):
