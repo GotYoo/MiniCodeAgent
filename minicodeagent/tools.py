@@ -8,8 +8,10 @@ import shutil
 import subprocess
 import textwrap
 import os
+import time
 from functools import partial
 
+from .tool_protocol import partial_response, success_response
 from .workspace import IGNORED_PATH_NAMES, clip
 
 BASE_TOOL_SPECS = {
@@ -148,6 +150,7 @@ def validate_tool(agent, name, args):
 
 
 def tool_list_files(agent, args):
+    started_at = time.monotonic()
     path = agent.path(args.get("path", "."))
     if not path.is_dir():
         raise ValueError("path is not a directory")
@@ -159,10 +162,21 @@ def tool_list_files(agent, args):
     for entry in entries[:200]:
         kind = "[D]" if entry.is_dir() else "[F]"
         lines.append(f"{kind} {entry.relative_to(agent.root)}")
-    return "\n".join(lines) or "(empty)"
+    text = "\n".join(lines) or "(empty)"
+    return success_response(
+        data={
+            "entries": [str(entry.relative_to(agent.root)) for entry in entries[:200]],
+            "truncated": len(entries) > 200,
+        },
+        text=text,
+        params_input=args,
+        time_ms=int((time.monotonic() - started_at) * 1000),
+        context={"cwd": str(path.relative_to(agent.root)) if path != agent.root else "."},
+    )
 
 
 def tool_read_file(agent, args):
+    started_at = time.monotonic()
     path = agent.path(args["path"])
     if not path.is_file():
         raise ValueError("path is not a file")
@@ -172,10 +186,25 @@ def tool_read_file(agent, args):
         raise ValueError("invalid line range")
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     body = "\n".join(f"{number:>4}: {line}" for number, line in enumerate(lines[start - 1:end], start=start))
-    return f"# {path.relative_to(agent.root)}\n{body}"
+    relpath = str(path.relative_to(agent.root))
+    text = f"# {relpath}\n{body}"
+    return success_response(
+        data={
+            "path": relpath,
+            "start": start,
+            "end": min(end, len(lines)),
+            "line_count": len(lines),
+            "content": "\n".join(lines[start - 1:end]),
+        },
+        text=text,
+        params_input=args,
+        time_ms=int((time.monotonic() - started_at) * 1000),
+        context={"path_resolved": str(path)},
+    )
 
 
 def tool_search(agent, args):
+    started_at = time.monotonic()
     pattern = str(args.get("pattern", "")).strip()
     if not pattern:
         raise ValueError("pattern must not be empty")
@@ -189,7 +218,32 @@ def tool_search(agent, args):
             capture_output=True,
             text=True,
         )
-        return result.stdout.strip() or result.stderr.strip() or "(no matches)"
+        text = result.stdout.strip() or result.stderr.strip() or "(no matches)"
+        return partial_response(
+            data={
+                "pattern": pattern,
+                "path": str(path.relative_to(agent.root)) if path != agent.root else ".",
+                "matches": result.stdout.strip().splitlines()[:200],
+                "fallback": False,
+                "exit_code": result.returncode,
+            },
+            text=text,
+            params_input=args,
+            time_ms=int((time.monotonic() - started_at) * 1000),
+            context={"cwd": "."},
+        ) if result.stderr.strip() and not result.stdout.strip() else success_response(
+            data={
+                "pattern": pattern,
+                "path": str(path.relative_to(agent.root)) if path != agent.root else ".",
+                "matches": result.stdout.strip().splitlines()[:200],
+                "fallback": False,
+                "exit_code": result.returncode,
+            },
+            text=text,
+            params_input=args,
+            time_ms=int((time.monotonic() - started_at) * 1000),
+            context={"cwd": "."},
+        )
 
     matches = []
     files = [path] if path.is_file() else [
@@ -201,11 +255,26 @@ def tool_search(agent, args):
             if pattern.lower() in line.lower():
                 matches.append(f"{file_path.relative_to(agent.root)}:{number}:{line}")
                 if len(matches) >= 200:
-                    return "\n".join(matches)
-    return "\n".join(matches) or "(no matches)"
+                    text = "\n".join(matches)
+                    return partial_response(
+                        data={"pattern": pattern, "matches": matches, "fallback": True, "truncated": True},
+                        text=text,
+                        params_input=args,
+                        time_ms=int((time.monotonic() - started_at) * 1000),
+                        context={"cwd": "."},
+                    )
+    text = "\n".join(matches) or "(no matches)"
+    return success_response(
+        data={"pattern": pattern, "matches": matches, "fallback": True, "truncated": False},
+        text=text,
+        params_input=args,
+        time_ms=int((time.monotonic() - started_at) * 1000),
+        context={"cwd": "."},
+    )
 
 
 def tool_run_shell(agent, args):
+    started_at = time.monotonic()
     command = str(args.get("command", "")).strip()
     if not command:
         raise ValueError("command must not be empty")
@@ -225,7 +294,7 @@ def tool_run_shell(agent, args):
         # 目的是减少敏感信息被意外带进命令执行环境的风险。
         env=env,
     )
-    return textwrap.dedent(
+    text = textwrap.dedent(
         f"""\
         exit_code: {result.returncode}
         stdout:
@@ -234,17 +303,39 @@ def tool_run_shell(agent, args):
         {result.stderr.strip() or "(empty)"}
         """
     ).strip()
+    response_factory = success_response if result.returncode == 0 else partial_response
+    return response_factory(
+        data={
+            "command": command,
+            "exit_code": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        },
+        text=text,
+        params_input=args,
+        time_ms=int((time.monotonic() - started_at) * 1000),
+        context={"cwd": "."},
+    )
 
 
 def tool_write_file(agent, args):
+    started_at = time.monotonic()
     path = agent.path(args["path"])
     content = str(args["content"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    return f"wrote {path.relative_to(agent.root)} ({len(content)} chars)"
+    relpath = str(path.relative_to(agent.root))
+    return success_response(
+        data={"path": relpath, "bytes": len(content.encode("utf-8")), "chars": len(content)},
+        text=f"wrote {relpath} ({len(content)} chars)",
+        params_input=args,
+        time_ms=int((time.monotonic() - started_at) * 1000),
+        context={"path_resolved": str(path)},
+    )
 
 
 def tool_patch_file(agent, args):
+    started_at = time.monotonic()
     path = agent.path(args["path"])
     if not path.is_file():
         raise ValueError("path is not a file")
@@ -258,10 +349,18 @@ def tool_patch_file(agent, args):
     if count != 1:
         raise ValueError(f"old_text must occur exactly once, found {count}")
     path.write_text(text.replace(old_text, str(args["new_text"]), 1), encoding="utf-8")
-    return f"patched {path.relative_to(agent.root)}"
+    relpath = str(path.relative_to(agent.root))
+    return success_response(
+        data={"path": relpath, "replacements": 1},
+        text=f"patched {relpath}",
+        params_input=args,
+        time_ms=int((time.monotonic() - started_at) * 1000),
+        context={"path_resolved": str(path)},
+    )
 
 
 def tool_delegate(agent, args):
+    started_at = time.monotonic()
     if agent.depth >= agent.max_depth:
         raise ValueError("delegate depth exceeded")
     task = str(args.get("task", "")).strip()
@@ -288,7 +387,15 @@ def tool_delegate(agent, args):
     # 子 agent 以只读方式运行、步数更少，最后只把结论文本返回给父 agent。
     child.session["memory"]["task"] = task
     child.session["memory"]["notes"] = [clip(agent.history_text(), 300)]
-    return "delegate_result:\n" + child.ask(task)
+    final = child.ask(task)
+    text = "delegate_result:\n" + final
+    return success_response(
+        data={"task": task, "max_steps": int(args.get("max_steps", 3)), "result": final},
+        text=text,
+        params_input=args,
+        time_ms=int((time.monotonic() - started_at) * 1000),
+        context={"read_only": True},
+    )
 
 
 _TOOL_RUNNERS = {

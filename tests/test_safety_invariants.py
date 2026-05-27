@@ -8,6 +8,7 @@ import pytest
 from minicodeagent import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
 from minicodeagent import cli as mini_cli
 from minicodeagent.task_state import TaskState
+from minicodeagent.tool_protocol import response_text
 
 
 def build_workspace(tmp_path):
@@ -172,14 +173,14 @@ def test_bound_tool_methods_delegate_into_tools_module(tmp_path):
         )()
         shell_result = agent.tool_run_shell({"command": "echo bypass", "timeout": 20})
 
-    assert "toolkit-shell" in shell_result
+    assert "toolkit-shell" in response_text(shell_result)
     fake_run.assert_called_once()
     assert agent.tool_run_shell.__func__.__module__ == "minicodeagent.runtime"
 
     with patch("minicodeagent.tools.tool_delegate", return_value="toolkit-delegate") as fake_delegate:
         delegate_result = agent.tool_delegate({"task": "inspect README.md", "max_steps": 2})
 
-    assert delegate_result == "toolkit-delegate"
+    assert response_text(delegate_result) == "toolkit-delegate"
     fake_delegate.assert_called_once()
 
 

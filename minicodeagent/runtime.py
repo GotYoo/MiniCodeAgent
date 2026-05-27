@@ -19,6 +19,7 @@ from . import memory as memorylib
 from .context_manager import ContextManager
 from .run_store import RunStore
 from .task_state import TaskState
+from .tool_protocol import ErrorCode, error_response, is_tool_response, response_error_code, response_status, response_text
 from . import tools as toolkit
 from .workspace import IGNORED_PATH_NAMES, MAX_HISTORY, WorkspaceContext, clip, now
 
@@ -1046,9 +1047,15 @@ class MiniCodeAgent:
         # -> 真正执行 -> 更新记忆。
         tool = self.tools.get(name)
         if tool is None:
+            response = error_response(
+                code=ErrorCode.UNKNOWN_TOOL,
+                message=f"error: unknown tool '{name}'",
+                params_input=args,
+            )
             self._last_tool_result_metadata = {
                 "tool_status": "rejected",
                 "tool_error_code": "unknown_tool",
+                "tool_response": response,
                 "security_event_type": "",
                 "risk_level": "high",
                 "read_only": False,
@@ -1056,7 +1063,7 @@ class MiniCodeAgent:
                 "workspace_changed": False,
                 "diff_summary": [],
             }
-            return f"error: unknown tool '{name}'"
+            return response_text(response)
         try:
             self.validate_tool(name, args)
         except Exception as exc:
@@ -1065,9 +1072,15 @@ class MiniCodeAgent:
             if example:
                 message += f"\nexample: {example}"
             security_event_type = "path_escape" if "path escapes workspace" in str(exc) else ""
+            response = error_response(
+                code=ErrorCode.ACCESS_DENIED if security_event_type == "path_escape" else ErrorCode.INVALID_PARAM,
+                message=message,
+                params_input=args,
+            )
             self._last_tool_result_metadata = {
                 "tool_status": "rejected",
                 "tool_error_code": "invalid_arguments",
+                "tool_response": response,
                 "security_event_type": security_event_type,
                 "risk_level": "high" if tool["risky"] else "low",
                 "read_only": not tool["risky"],
@@ -1075,11 +1088,17 @@ class MiniCodeAgent:
                 "workspace_changed": False,
                 "diff_summary": [],
             }
-            return message
+            return response_text(response)
         if self.repeated_tool_call(name, args):
+            response = error_response(
+                code=ErrorCode.REPEATED_TOOL_CALL,
+                message=f"error: repeated identical tool call for {name}; choose a different tool or return a final answer",
+                params_input=args,
+            )
             self._last_tool_result_metadata = {
                 "tool_status": "rejected",
                 "tool_error_code": "repeated_identical_call",
+                "tool_response": response,
                 "security_event_type": "",
                 "risk_level": "high" if tool["risky"] else "low",
                 "read_only": not tool["risky"],
@@ -1087,11 +1106,17 @@ class MiniCodeAgent:
                 "workspace_changed": False,
                 "diff_summary": [],
             }
-            return f"error: repeated identical tool call for {name}; choose a different tool or return a final answer"
+            return response_text(response)
         if tool["risky"] and not self.approve(name, args):
+            response = error_response(
+                code=ErrorCode.READ_ONLY_BLOCKED if self.read_only else ErrorCode.APPROVAL_DENIED,
+                message=f"error: approval denied for {name}",
+                params_input=args,
+            )
             self._last_tool_result_metadata = {
                 "tool_status": "rejected",
                 "tool_error_code": "approval_denied",
+                "tool_response": response,
                 "security_event_type": "read_only_block" if self.read_only else "approval_denied",
                 "risk_level": "high",
                 "read_only": False,
@@ -1099,17 +1124,31 @@ class MiniCodeAgent:
                 "workspace_changed": False,
                 "diff_summary": [],
             }
-            return f"error: approval denied for {name}"
+            return response_text(response)
         before_snapshot = self.capture_workspace_snapshot() if tool["risky"] else {}
         after_snapshot = before_snapshot
         try:
-            result = clip(tool["run"](args))
+            raw_result = tool["run"](args)
+            response = raw_result if is_tool_response(raw_result) else {
+                "status": "success",
+                "data": {},
+                "text": str(raw_result),
+                "stats": {"time_ms": 0},
+                "context": {"params_input": args},
+            }
+            result = clip(response_text(response))
             after_snapshot = self.capture_workspace_snapshot() if tool["risky"] else before_snapshot
             affected_paths, diff_summary = self.diff_workspace_snapshots(before_snapshot, after_snapshot)
             workspace_changed = bool(affected_paths)
             tool_status = "ok"
             tool_error_code = ""
-            if name == "run_shell":
+            if response_status(response) == "partial":
+                tool_status = "partial_success"
+                tool_error_code = response_error_code(response) or "tool_partial_success"
+            elif response_status(response) == "error":
+                tool_status = "error"
+                tool_error_code = response_error_code(response) or "tool_failed"
+            elif name == "run_shell":
                 match = re.search(r"exit_code:\s*(-?\d+)", result)
                 exit_code = int(match.group(1)) if match else 0
                 if exit_code != 0 and workspace_changed:
@@ -1122,6 +1161,7 @@ class MiniCodeAgent:
             self._last_tool_result_metadata = {
                 "tool_status": tool_status,
                 "tool_error_code": tool_error_code,
+                "tool_response": response,
                 "security_event_type": "",
                 "risk_level": "high" if tool["risky"] else "low",
                 "read_only": not tool["risky"],
@@ -1137,9 +1177,15 @@ class MiniCodeAgent:
             affected_paths, diff_summary = self.diff_workspace_snapshots(before_snapshot, after_snapshot)
             workspace_changed = bool(affected_paths)
             security_event_type = "path_escape" if "path escapes workspace" in str(exc) else ""
+            response = error_response(
+                code=ErrorCode.ACCESS_DENIED if security_event_type == "path_escape" else ErrorCode.EXECUTION_ERROR,
+                message=f"error: tool {name} failed: {exc}",
+                params_input=args,
+            )
             self._last_tool_result_metadata = {
                 "tool_status": "partial_success" if workspace_changed else "error",
                 "tool_error_code": "tool_partial_success" if workspace_changed else "tool_failed",
+                "tool_response": response,
                 "security_event_type": security_event_type,
                 "risk_level": "high" if tool["risky"] else "low",
                 "read_only": not tool["risky"],
@@ -1149,7 +1195,7 @@ class MiniCodeAgent:
                 "diff_summary": diff_summary,
             }
             self.record_process_note_for_tool(name, self._last_tool_result_metadata)
-            return f"error: tool {name} failed: {exc}"
+            return response_text(response)
 
     def repeated_tool_call(self, name, args):
         # agent 很常见的一种坏循环，是在没有新信息的情况下反复发起同一调用。
