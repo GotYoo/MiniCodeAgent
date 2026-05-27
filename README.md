@@ -1,100 +1,119 @@
 # MiniCodeAgent
 
-`MiniCodeAgent` 是一个面向代码仓库的轻量本地 coding agent。它直接跑在终端里，先看当前工作区，再用一组受约束的工具去读文件、改文件、跑命令，并把会话状态保存在本地 `.minicodeagent/` 目录里。
+MiniCodeAgent is a lightweight local coding agent runtime for repository-oriented tasks. It runs in the terminal, inspects the current workspace, calls a bounded set of tools, and stores session state and run artifacts locally under `.minicodeagent/`.
 
-它更像一个能在仓库里持续工作的命令行助手，不是纯聊天窗口。你可以拿它做代码排查、测试修复、仓库分析，或者让它在当前项目里执行一次性的工程任务。
+The project focuses on the runtime layer behind coding agents: workspace context, model adapters, tool execution, approval control, memory, checkpointed resume, trace logging, and reproducible run reports.
 
-## 适合做什么
+## What It Does
 
-- 在本地仓库里排查测试失败
-- 读取当前代码结构并给出修改建议
-- 基于现有文件做小步迭代，而不是脱离仓库空想
-- 在会话中保留上下文，支持继续上一次工作
+- Inspects repository structure and important project documents before acting.
+- Reads files, searches code, writes patches, and runs shell commands through explicit tools.
+- Keeps conversation history, compact working memory, and checkpoint metadata across turns.
+- Supports local run artifacts for debugging and review: `task_state.json`, `trace.jsonl`, and `report.json`.
+- Works with Ollama, OpenAI-compatible Responses API, Anthropic-compatible Messages API, and DeepSeek's Anthropic-compatible endpoint.
+- Supports risky-tool approval modes: `ask`, `auto`, and `never`.
 
-## 主要特性
+## Runtime Flow
 
-- 包名是 `MiniCodeAgent`
-- CLI 命令是 `MiniCodeAgent`
-- 模块入口是 `python -m minicodeagent`
-- 会话保存在 `.minicodeagent/sessions/`
-- 每次运行的工件保存在 `.minicodeagent/runs/<run_id>/`
-- 支持四类模型后端：
-  - Ollama
-  - OpenAI 兼容 Responses API
-  - Anthropic 兼容 Messages API
-  - DeepSeek Anthropic 兼容 API
+```mermaid
+flowchart TD
+    User["User request"] --> CLI["CLI / one-shot command"]
+    CLI --> Workspace["Workspace snapshot"]
+    CLI --> Session["Session store"]
+    Workspace --> Runtime["MiniCodeAgent runtime"]
+    Session --> Runtime
+    Runtime --> Context["Context manager"]
+    Context --> Prompt["Prompt: rules + workspace + memory + history + request"]
+    Prompt --> Model["Model adapter"]
+    Model --> Decision{"Tool call or final answer?"}
+    Decision -->|Tool call| Validate["Validate tool and arguments"]
+    Validate --> Approval{"Risky tool?"}
+    Approval -->|No| Execute["Execute tool"]
+    Approval -->|Yes| Policy["Approval policy"]
+    Policy -->|Allowed| Execute
+    Policy -->|Denied| Observation["Denied observation"]
+    Execute --> Observation["Tool observation"]
+    Observation --> Memory["Update memory and checkpoint"]
+    Memory --> Trace["Write trace and task state"]
+    Trace --> Context
+    Decision -->|Final answer| Report["Write report.json"]
+    Report --> Answer["Return answer"]
+```
 
-## 使用截图
+## Project Layout
 
-CLI 帮助信息：
+```text
+minicodeagent/
+  cli.py              CLI assembly and interactive loop
+  runtime.py          Agent control loop, approval, trace, checkpoints
+  tools.py            Built-in workspace tools
+  context_manager.py  Prompt section budgeting and history reduction
+  memory.py           Working memory and durable topic notes
+  models.py           Provider adapters
+  run_store.py        Local run artifacts
+  task_state.py       Per-run task status model
+tests/                Regression tests for runtime, tools, memory, safety, metrics
+benchmarks/           Scripted benchmark tasks
+docs/                 Public architecture and review notes
+```
 
-![MiniCodeAgent help](assets/screenshots/minicodeagent-help.png)
+## Install
 
-启动界面：
+MiniCodeAgent requires Python 3.10+.
 
-![MiniCodeAgent start](assets/screenshots/minicodeagent-start.png)
-
-REPL 内置命令与会话路径：
-
-![MiniCodeAgent repl](assets/screenshots/minicodeagent-repl.png)
-
-## 安装
-
-需要 Python 3.10+。
-
-如果你用 `uv`，直接安装依赖：
+With `uv`:
 
 ```bash
 uv sync
 ```
 
-如果你已经在自己的 Python 环境里工作，也可以直接装成可编辑模式：
+With pip:
 
 ```bash
 pip install -e .
 ```
 
-## 快速开始
+## Quick Start
 
-在当前仓库里启动交互模式。当前推荐使用 DeepSeek：
+Run in the current repository:
 
 ```bash
 uv run minicodeagent --provider deepseek
 ```
 
-指定另一个工作目录：
+Run against another workspace:
 
 ```bash
-uv run minicodeagent --cwd /path/to/repo
+uv run minicodeagent --cwd /path/to/repo --provider deepseek
 ```
 
-直接跑一次性任务：
+Run a one-shot task:
 
 ```bash
 uv run minicodeagent --provider deepseek "inspect the test failures and propose a fix"
 ```
 
-如果当前环境已经安装过包，也可以直接这样启动：
+If installed in the current environment:
 
 ```bash
 python -m minicodeagent --provider deepseek
 ```
 
-## 模型后端
+## Configuration
 
-MiniCodeAgent 启动时会读取项目根目录的 `.env`。本地真实 key 放在 `.env`，仓库只保留 `.env.example`。配置优先级是：
+MiniCodeAgent loads `.env` from the workspace root. Keep real keys in `.env`; only `.env.example` should be committed.
+
+Configuration priority:
 
 ```text
-显式 CLI 参数 > .env 里的 MINICODEAGENT_* 变量 > 旧环境变量 > 代码默认值
+CLI arguments > MINICODEAGENT_* environment variables > legacy provider variables > defaults
 ```
 
-本地第一次配置：
+Example:
 
 ```bash
 cp .env.example .env
 ```
-
-然后把要使用的 provider key 填进去。`.env` 已经被 `.gitignore` 忽略，不要提交真实 key。
 
 ### Ollama
 
@@ -104,87 +123,71 @@ ollama pull qwen3.5:4b
 uv run minicodeagent --provider ollama --model qwen3.5:4b
 ```
 
-### OpenAI 兼容接口
-
-默认 OpenAI 兼容接口使用 right.codes 的 Codex endpoint：
-
-```bash
-MINICODEAGENT_OPENAI_API_BASE="https://www.right.codes/codex/v1"
-MINICODEAGENT_OPENAI_API_KEY="your-api-key"
-MINICODEAGENT_OPENAI_MODEL="gpt-5.4"
-```
-
-也可以改成其他 OpenAI-compatible 服务：
+### OpenAI-Compatible
 
 ```bash
 MINICODEAGENT_OPENAI_API_BASE="https://your-api.example/v1"
 MINICODEAGENT_OPENAI_API_KEY="your-api-key"
 MINICODEAGENT_OPENAI_MODEL="gpt-5.4"
-```
-
-```bash
 uv run minicodeagent --provider openai
 ```
 
-### Anthropic 兼容接口
-
-默认 Anthropic 兼容接口使用 right.codes 的 Claude endpoint：
+### Anthropic-Compatible
 
 ```bash
-MINICODEAGENT_ANTHROPIC_API_BASE="https://www.right.codes/claude/v1"
+MINICODEAGENT_ANTHROPIC_API_BASE="https://your-api.example/v1"
 MINICODEAGENT_ANTHROPIC_API_KEY="your-api-key"
 MINICODEAGENT_ANTHROPIC_MODEL="claude-sonnet-4-6"
-```
-
-```bash
 uv run minicodeagent --provider anthropic
 ```
-
-如果你的服务端对多个兼容接口复用了同一套密钥，`MiniCodeAgent` 也支持从 `MINICODEAGENT_ANTHROPIC_API_KEY` 回退到 `ANTHROPIC_API_KEY`、`MINICODEAGENT_RIGHT_CODES_API_KEY`、`RIGHT_CODES_API_KEY`、`MINICODEAGENT_OPENAI_API_KEY` 或 `OPENAI_API_KEY`。
 
 ### DeepSeek
 
 ```bash
 MINICODEAGENT_DEEPSEEK_API_KEY="your-api-key"
 MINICODEAGENT_DEEPSEEK_MODEL="deepseek-v4-pro"
-```
-
-```bash
 uv run minicodeagent --provider deepseek
 ```
 
-默认 DeepSeek base URL 是 `https://api.deepseek.com/anthropic`，走 DeepSeek 的 Anthropic 兼容接口。如果需要改到代理服务，可以设置 `MINICODEAGENT_DEEPSEEK_API_BASE` 或启动时传 `--base-url`。
+## Interactive Commands
 
-## 常用交互命令
+- `/help`: show commands
+- `/memory`: show distilled working memory
+- `/session`: show the current session file path
+- `/reset`: clear current session history and memory
+- `/exit` or `/quit`: exit the REPL
 
-- `/help`：查看内置命令
-- `/memory`：查看提炼后的工作记忆
-- `/session`：查看当前会话文件路径
-- `/reset`：清空当前会话状态
-- `/exit` 或 `/quit`：退出 REPL
+## Safety And Persistence
 
-## 安全与持久化
+MiniCodeAgent treats shell execution and file writes as risky actions. Risky tools are controlled by:
 
-`MiniCodeAgent` 不会默认把所有动作都放开。像 shell 执行、文件写入这类高风险操作，会受审批模式控制：
+```bash
+--approval ask
+--approval auto
+--approval never
+```
 
-- `--approval ask`
-- `--approval auto`
-- `--approval never`
+Run artifacts are written locally:
 
-每次运行结束后，都会在 `.minicodeagent/runs/<run_id>/` 下写出这些文件：
+```text
+.minicodeagent/runs/<run_id>/
+  task_state.json
+  trace.jsonl
+  report.json
+```
 
-- `task_state.json`
-- `trace.jsonl`
-- `report.json`
+These artifacts are local debugging and review data; they are ignored by git.
 
-这些内容默认只保存在本地，不需要跟仓库一起提交。
+## Development
 
-## 开发
+Run tests:
 
-如果装了 Ruff，可以这样检查：
+```bash
+python -m pytest tests -q
+```
+
+Run lint if Ruff is installed:
 
 ```bash
 uv run ruff check .
 ```
-
-
