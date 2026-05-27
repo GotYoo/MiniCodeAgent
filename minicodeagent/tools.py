@@ -7,6 +7,7 @@
 import shutil
 import subprocess
 import textwrap
+import os
 from functools import partial
 
 from .workspace import IGNORED_PATH_NAMES, clip
@@ -211,6 +212,7 @@ def tool_run_shell(agent, args):
     timeout = int(args.get("timeout", 20))
     if timeout < 1 or timeout > 120:
         raise ValueError("timeout must be in [1, 120]")
+    env = agent.shell_env()
     result = subprocess.run(
         command,
         cwd=agent.root,
@@ -218,9 +220,10 @@ def tool_run_shell(agent, args):
         capture_output=True,
         text=True,
         timeout=timeout,
+        executable=env.get("ComSpec") if os.name == "nt" else None,
         # 这里传入的是过滤后的环境变量，而不是直接继承整个父 shell 环境，
         # 目的是减少敏感信息被意外带进命令执行环境的风险。
-        env=agent.shell_env(),
+        env=env,
     )
     return textwrap.dedent(
         f"""\
@@ -265,9 +268,9 @@ def tool_delegate(agent, args):
     if not task:
         raise ValueError("task must not be empty")
 
-    from .runtime import Pico
+    from .runtime import MiniCodeAgent
 
-    child = Pico(
+    child = MiniCodeAgent(
         model_client=agent.model_client,
         workspace=agent.workspace,
         session_store=agent.session_store,
@@ -296,3 +299,5 @@ _TOOL_RUNNERS = {
     "write_file": tool_write_file,
     "patch_file": tool_patch_file,
 }
+
+

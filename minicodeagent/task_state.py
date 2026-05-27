@@ -108,3 +108,5 @@ class TaskState:
             "checkpoint_id": self.checkpoint_id,
             "resume_status": self.resume_status,
         }
+
+

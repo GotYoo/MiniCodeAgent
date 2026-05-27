@@ -1,12 +1,12 @@
 from .cli import build_agent, build_arg_parser, build_welcome, main
 from .models import AnthropicCompatibleModelClient, FakeModelClient, OllamaModelClient, OpenAICompatibleModelClient
-from .runtime import MiniAgent, Pico, SessionStore
+from .runtime import MiniAgent, MiniCodeAgent, SessionStore
 from .workspace import WorkspaceContext
 
 __all__ = [
     "AnthropicCompatibleModelClient",
     "FakeModelClient",
-    "Pico",
+    "MiniCodeAgent",
     "build_agent",
     "build_arg_parser",
     "build_welcome",
@@ -17,3 +17,5 @@ __all__ = [
     "SessionStore",
     "WorkspaceContext",
 ]
+
+

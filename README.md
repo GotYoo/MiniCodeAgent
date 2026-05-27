@@ -1,6 +1,6 @@
-# pico
+# MiniCodeAgent
 
-`pico` 是一个面向代码仓库的轻量本地 coding agent。它直接跑在终端里，先看当前工作区，再用一组受约束的工具去读文件、改文件、跑命令，并把会话状态保存在本地 `.pico/` 目录里。
+`MiniCodeAgent` 是一个面向代码仓库的轻量本地 coding agent。它直接跑在终端里，先看当前工作区，再用一组受约束的工具去读文件、改文件、跑命令，并把会话状态保存在本地 `.minicodeagent/` 目录里。
 
 它更像一个能在仓库里持续工作的命令行助手，不是纯聊天窗口。你可以拿它做代码排查、测试修复、仓库分析，或者让它在当前项目里执行一次性的工程任务。
 
@@ -13,11 +13,11 @@
 
 ## 主要特性
 
-- 包名是 `pico`
-- CLI 命令是 `pico`
-- 模块入口是 `python -m pico`
-- 会话保存在 `.pico/sessions/`
-- 每次运行的工件保存在 `.pico/runs/<run_id>/`
+- 包名是 `MiniCodeAgent`
+- CLI 命令是 `MiniCodeAgent`
+- 模块入口是 `python -m minicodeagent`
+- 会话保存在 `.minicodeagent/sessions/`
+- 每次运行的工件保存在 `.minicodeagent/runs/<run_id>/`
 - 支持四类模型后端：
   - Ollama
   - OpenAI 兼容 Responses API
@@ -28,15 +28,15 @@
 
 CLI 帮助信息：
 
-![pico help](assets/screenshots/pico-help.png)
+![MiniCodeAgent help](assets/screenshots/minicodeagent-help.png)
 
 启动界面：
 
-![pico start](assets/screenshots/pico-start.png)
+![MiniCodeAgent start](assets/screenshots/minicodeagent-start.png)
 
 REPL 内置命令与会话路径：
 
-![pico repl](assets/screenshots/pico-repl.png)
+![MiniCodeAgent repl](assets/screenshots/minicodeagent-repl.png)
 
 ## 安装
 
@@ -59,33 +59,33 @@ pip install -e .
 在当前仓库里启动交互模式。当前推荐使用 DeepSeek：
 
 ```bash
-uv run pico --provider deepseek
+uv run minicodeagent --provider deepseek
 ```
 
 指定另一个工作目录：
 
 ```bash
-uv run pico --cwd /path/to/repo
+uv run minicodeagent --cwd /path/to/repo
 ```
 
 直接跑一次性任务：
 
 ```bash
-uv run pico --provider deepseek "inspect the test failures and propose a fix"
+uv run minicodeagent --provider deepseek "inspect the test failures and propose a fix"
 ```
 
 如果当前环境已经安装过包，也可以直接这样启动：
 
 ```bash
-python -m pico --provider deepseek
+python -m minicodeagent --provider deepseek
 ```
 
 ## 模型后端
 
-Pico 启动时会读取项目根目录的 `.env`。本地真实 key 放在 `.env`，仓库只保留 `.env.example`。配置优先级是：
+MiniCodeAgent 启动时会读取项目根目录的 `.env`。本地真实 key 放在 `.env`，仓库只保留 `.env.example`。配置优先级是：
 
 ```text
-显式 CLI 参数 > .env 里的 PICO_* 变量 > 旧环境变量 > 代码默认值
+显式 CLI 参数 > .env 里的 MINICODEAGENT_* 变量 > 旧环境变量 > 代码默认值
 ```
 
 本地第一次配置：
@@ -101,7 +101,7 @@ cp .env.example .env
 ```bash
 ollama serve
 ollama pull qwen3.5:4b
-uv run pico --provider ollama --model qwen3.5:4b
+uv run minicodeagent --provider ollama --model qwen3.5:4b
 ```
 
 ### OpenAI 兼容接口
@@ -109,21 +109,21 @@ uv run pico --provider ollama --model qwen3.5:4b
 默认 OpenAI 兼容接口使用 right.codes 的 Codex endpoint：
 
 ```bash
-PICO_OPENAI_API_BASE="https://www.right.codes/codex/v1"
-PICO_OPENAI_API_KEY="your-api-key"
-PICO_OPENAI_MODEL="gpt-5.4"
+MINICODEAGENT_OPENAI_API_BASE="https://www.right.codes/codex/v1"
+MINICODEAGENT_OPENAI_API_KEY="your-api-key"
+MINICODEAGENT_OPENAI_MODEL="gpt-5.4"
 ```
 
 也可以改成其他 OpenAI-compatible 服务：
 
 ```bash
-PICO_OPENAI_API_BASE="https://your-api.example/v1"
-PICO_OPENAI_API_KEY="your-api-key"
-PICO_OPENAI_MODEL="gpt-5.4"
+MINICODEAGENT_OPENAI_API_BASE="https://your-api.example/v1"
+MINICODEAGENT_OPENAI_API_KEY="your-api-key"
+MINICODEAGENT_OPENAI_MODEL="gpt-5.4"
 ```
 
 ```bash
-uv run pico --provider openai
+uv run minicodeagent --provider openai
 ```
 
 ### Anthropic 兼容接口
@@ -131,29 +131,29 @@ uv run pico --provider openai
 默认 Anthropic 兼容接口使用 right.codes 的 Claude endpoint：
 
 ```bash
-PICO_ANTHROPIC_API_BASE="https://www.right.codes/claude/v1"
-PICO_ANTHROPIC_API_KEY="your-api-key"
-PICO_ANTHROPIC_MODEL="claude-sonnet-4-6"
+MINICODEAGENT_ANTHROPIC_API_BASE="https://www.right.codes/claude/v1"
+MINICODEAGENT_ANTHROPIC_API_KEY="your-api-key"
+MINICODEAGENT_ANTHROPIC_MODEL="claude-sonnet-4-6"
 ```
 
 ```bash
-uv run pico --provider anthropic
+uv run minicodeagent --provider anthropic
 ```
 
-如果你的服务端对多个兼容接口复用了同一套密钥，`pico` 也支持从 `PICO_ANTHROPIC_API_KEY` 回退到 `ANTHROPIC_API_KEY`、`PICO_RIGHT_CODES_API_KEY`、`RIGHT_CODES_API_KEY`、`PICO_OPENAI_API_KEY` 或 `OPENAI_API_KEY`。
+如果你的服务端对多个兼容接口复用了同一套密钥，`MiniCodeAgent` 也支持从 `MINICODEAGENT_ANTHROPIC_API_KEY` 回退到 `ANTHROPIC_API_KEY`、`MINICODEAGENT_RIGHT_CODES_API_KEY`、`RIGHT_CODES_API_KEY`、`MINICODEAGENT_OPENAI_API_KEY` 或 `OPENAI_API_KEY`。
 
 ### DeepSeek
 
 ```bash
-PICO_DEEPSEEK_API_KEY="your-api-key"
-PICO_DEEPSEEK_MODEL="deepseek-v4-pro"
+MINICODEAGENT_DEEPSEEK_API_KEY="your-api-key"
+MINICODEAGENT_DEEPSEEK_MODEL="deepseek-v4-pro"
 ```
 
 ```bash
-uv run pico --provider deepseek
+uv run minicodeagent --provider deepseek
 ```
 
-默认 DeepSeek base URL 是 `https://api.deepseek.com/anthropic`，走 DeepSeek 的 Anthropic 兼容接口。如果需要改到代理服务，可以设置 `PICO_DEEPSEEK_API_BASE` 或启动时传 `--base-url`。
+默认 DeepSeek base URL 是 `https://api.deepseek.com/anthropic`，走 DeepSeek 的 Anthropic 兼容接口。如果需要改到代理服务，可以设置 `MINICODEAGENT_DEEPSEEK_API_BASE` 或启动时传 `--base-url`。
 
 ## 常用交互命令
 
@@ -165,13 +165,13 @@ uv run pico --provider deepseek
 
 ## 安全与持久化
 
-`pico` 不会默认把所有动作都放开。像 shell 执行、文件写入这类高风险操作，会受审批模式控制：
+`MiniCodeAgent` 不会默认把所有动作都放开。像 shell 执行、文件写入这类高风险操作，会受审批模式控制：
 
 - `--approval ask`
 - `--approval auto`
 - `--approval never`
 
-每次运行结束后，都会在 `.pico/runs/<run_id>/` 下写出这些文件：
+每次运行结束后，都会在 `.minicodeagent/runs/<run_id>/` 下写出这些文件：
 
 - `task_state.json`
 - `trace.jsonl`
@@ -186,3 +186,5 @@ uv run pico --provider deepseek
 ```bash
 uv run ruff check .
 ```
+
+

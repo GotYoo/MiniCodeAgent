@@ -8,13 +8,13 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pico.metrics import collect_resume_metrics, render_resume_metrics_markdown  # noqa: E402
+from minicodeagent.metrics import collect_resume_metrics, render_resume_metrics_markdown  # noqa: E402
 
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(description="Collect pico resume metrics from benchmark and run artifacts.")
+    parser = argparse.ArgumentParser(description="Collect MiniCodeAgent resume metrics from benchmark and run artifacts.")
     parser.add_argument("--benchmark-artifact", required=True, help="Path to benchmark artifact JSON.")
-    parser.add_argument("--runs-root", required=True, help="Path to .pico/runs root.")
+    parser.add_argument("--runs-root", required=True, help="Path to .minicodeagent/runs root.")
     parser.add_argument("--provider-experiments", default=None, help="Optional provider experiments JSON.")
     parser.add_argument("--experiment-mode", choices=("synthetic", "real"), default="synthetic", help="Whether to use deterministic synthetic experiments or real model runs.")
     parser.add_argument("--real-provider", choices=("gpt", "claude", "deepseek"), default="gpt", help="Provider to use for real experiment mode.")
@@ -53,3 +53,5 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

@@ -8,6 +8,7 @@ import subprocess
 import textwrap
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,7 +17,7 @@ MAX_HISTORY = 12000
 # 这些文件最可能直接影响 agent 的行动方式。
 # 我们不会预加载整个仓库，只会先给模型一小份“导航包”。
 DOC_NAMES = ("AGENTS.md", "README.md", "pyproject.toml", "package.json")
-IGNORED_PATH_NAMES = {".git", ".pico", "__pycache__", ".pytest_cache", ".ruff_cache", ".venv", "venv"}
+IGNORED_PATH_NAMES = {".git", ".minicodeagent", "__pycache__", ".pytest_cache", ".ruff_cache", ".venv", "venv"}
 
 
 def now():
@@ -39,6 +40,13 @@ def middle(text, limit):
     left = (limit - 3) // 2
     right = limit - 3 - left
     return text[:left] + "..." + text[-right:]
+
+
+def stable_relative_path(path, root):
+    try:
+        return Path(path).relative_to(root).as_posix()
+    except ValueError:
+        return Path(os.path.relpath(str(path), str(root))).as_posix()
 
 
 class WorkspaceContext:
@@ -82,7 +90,7 @@ class WorkspaceContext:
                 path = base / name
                 if not path.exists():
                     continue
-                key = str(path.relative_to(repo_root))
+                key = stable_relative_path(path, repo_root)
                 if key in docs:
                     continue
                 docs[key] = clip(path.read_text(encoding="utf-8", errors="replace"), 1200)
@@ -132,3 +140,5 @@ class WorkspaceContext:
             "project_docs": dict(self.project_docs),
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
