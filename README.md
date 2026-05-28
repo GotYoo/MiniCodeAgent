@@ -51,8 +51,10 @@ minicodeagent/
   memory.py           Working memory and durable topic notes
   models.py           Provider adapters
   run_store.py        Local run artifacts
+  skills.py           Repository-local skill discovery
   task_state.py       Per-run task status model
 tests/                Regression tests for runtime, tools, memory, safety, metrics
+skills/               Local task workflow summaries injected into the prompt
 benchmarks/           Scripted benchmark tasks
 docs/                 Public architecture and review notes
 ```

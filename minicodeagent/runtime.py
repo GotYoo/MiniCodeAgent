@@ -18,6 +18,7 @@ from pathlib import Path
 from . import memory as memorylib
 from .context_manager import ContextManager
 from .run_store import RunStore
+from .skills import discover_skills, render_skill_summaries
 from .task_state import TaskState
 from .tool_protocol import ErrorCode, error_response, is_tool_response, response_error_code, response_status, response_text
 from . import tools as toolkit
@@ -80,6 +81,7 @@ class PromptPrefix:
     hash: str
     workspace_fingerprint: str
     tool_signature: str
+    skill_signature: str
     built_at: str
 
 
@@ -152,6 +154,7 @@ class MiniCodeAgent:
         )
         self.session["memory"] = self.memory.to_dict()
         self.tools = self.build_tools()
+        self.skills = discover_skills(self.root)
         self.prefix_state = self.build_prefix()
         self.prefix = self.prefix_state.text
         self.context_manager = ContextManager(self)
@@ -211,6 +214,7 @@ class MiniCodeAgent:
             "shell_env_allowlist": list(self.shell_env_allowlist),
             "workspace_fingerprint": getattr(getattr(self, "prefix_state", None), "workspace_fingerprint", self.workspace.fingerprint()),
             "tool_signature": self.tool_signature(),
+            "skill_signature": self.skill_signature(),
         }
 
     def checkpoint_state(self):
@@ -262,6 +266,7 @@ class MiniCodeAgent:
                     "shell_env_allowlist",
                     "workspace_fingerprint",
                     "tool_signature",
+                    "skill_signature",
                 )
                 for key in identity_keys:
                     if key not in saved_identity:
@@ -341,6 +346,17 @@ class MiniCodeAgent:
             )
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
+    def skill_signature(self):
+        payload = [
+            {
+                "name": skill.name,
+                "description": skill.description,
+                "slug": skill.slug,
+            }
+            for skill in getattr(self, "skills", [])
+        ]
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
     def approval_context(self, name, tool):
         return {
             "tool": str(name),
@@ -356,6 +372,7 @@ class MiniCodeAgent:
             risk = "approval required" if tool["risky"] else "safe"
             tool_lines.append(f"- {name}({fields}) [{risk}] {tool['description']}")
         tool_text = "\n".join(tool_lines)
+        skill_text = render_skill_summaries(getattr(self, "skills", []))
         examples = "\n".join(
             [
                 '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
@@ -396,6 +413,8 @@ class MiniCodeAgent:
             Tools:
             {tool_text}
 
+            {skill_text}
+
             Valid response examples:
             {examples}
 
@@ -407,6 +426,7 @@ class MiniCodeAgent:
             hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
             workspace_fingerprint=self.workspace.fingerprint(),
             tool_signature=self.tool_signature(),
+            skill_signature=self.skill_signature(),
             built_at=now(),
         )
 
@@ -417,6 +437,7 @@ class MiniCodeAgent:
     def refresh_prefix(self, force=False):
         previous_hash = getattr(getattr(self, "prefix_state", None), "hash", None)
         previous_workspace_fingerprint = getattr(getattr(self, "prefix_state", None), "workspace_fingerprint", None)
+        previous_skill_signature = getattr(getattr(self, "prefix_state", None), "skill_signature", None)
 
         # 工作区事实相对稳定，所以这里按整体刷新；
         # 只有这些事实真的变化了，才重建完整 prefix。
@@ -425,14 +446,17 @@ class MiniCodeAgent:
         workspace_changed = force or refreshed_workspace_fingerprint != previous_workspace_fingerprint
         if workspace_changed:
             self.workspace = refreshed_workspace
+        self.skills = discover_skills(self.root)
+        skills_changed = force or self.skill_signature() != previous_skill_signature
 
-        prefix_state = self.build_prefix() if workspace_changed or force or previous_hash is None else self.prefix_state
+        prefix_state = self.build_prefix() if workspace_changed or skills_changed or force or previous_hash is None else self.prefix_state
         prefix_changed = force or previous_hash != prefix_state.hash
         if prefix_changed:
             self._apply_prefix_state(prefix_state)
 
         self._last_prefix_refresh = {
             "workspace_changed": workspace_changed,
+            "skills_changed": skills_changed,
             "prefix_changed": prefix_changed,
         }
         return dict(self._last_prefix_refresh)
@@ -470,7 +494,8 @@ class MiniCodeAgent:
         return bool(self.feature_flags.get(str(name), False))
 
     def prompt(self, user_message):
-        prompt, _ = self._build_prompt_and_metadata(user_message)
+        prompt, metadata = self._build_prompt_and_metadata(user_message)
+        self.last_prompt_metadata = metadata
         return prompt
 
     def record(self, item):
@@ -582,7 +607,11 @@ class MiniCodeAgent:
                 "prompt_cache_key": self.prefix_state.hash,
                 "workspace_fingerprint": self.prefix_state.workspace_fingerprint,
                 "tool_signature": self.prefix_state.tool_signature,
+                "skill_count": len(getattr(self, "skills", [])),
+                "skill_names": [skill.name for skill in getattr(self, "skills", [])],
+                "skill_signature": self.prefix_state.skill_signature,
                 "workspace_changed": refresh["workspace_changed"],
+                "skills_changed": refresh["skills_changed"],
                 "prefix_changed": refresh["prefix_changed"],
                 "prompt_cache_supported": bool(getattr(self.model_client, "supports_prompt_cache", False)),
                 "resume_status": self.resume_state.get("status", CHECKPOINT_NONE_STATUS),
