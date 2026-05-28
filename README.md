@@ -4,6 +4,18 @@ MiniCodeAgent is a lightweight local coding agent runtime for repository-oriente
 
 The project focuses on the runtime layer behind coding agents: workspace context, model adapters, tool execution, approval control, memory, checkpointed resume, trace logging, and reproducible run reports.
 
+## Why MiniCodeAgent
+
+MiniCodeAgent is built as an interview-ready agent engineering project rather than a thin API wrapper. The goal is to show how a coding agent can be controlled, observed, extended, and explained.
+
+- **Runtime control loop:** turns a user request into repeated model decisions, validated tool calls, observations, checkpoints, and a final answer.
+- **Bounded tool system:** exposes file read/search/write/patch/shell/delegation through explicit schemas instead of free-form hidden actions.
+- **Unified tool protocol:** normalizes tool outputs into success, partial, and error envelopes while still giving the model concise observations.
+- **Safety approval layer:** separates safe read/search tools from risky shell and file-write tools, with `ask`, `auto`, `never`, and read-only modes.
+- **Observable run artifacts:** records `task_state.json`, `trace.jsonl`, and structured `report.json` for post-run debugging and review.
+- **Local skills extension:** loads repository-local `skills/*/SKILL.md`, activates relevant skills per request, and records active skills in reports.
+- **Demo replay path:** provides built-in interview demo templates and report review commands so the project can be demonstrated consistently.
+
 ## What It Does
 
 - Inspects repository structure and important project documents before acting.
@@ -110,6 +122,42 @@ uv run minicodeagent --approval ask "Run the focused failing test, diagnose the 
 uv run minicodeagent report latest
 ```
 
+## Interview Demo Path
+
+Use this sequence when presenting the project:
+
+1. Show available demo tasks:
+
+   ```bash
+   uv run minicodeagent demo list
+   ```
+
+2. Inspect one demo template:
+
+   ```bash
+   uv run minicodeagent demo show test-fix
+   ```
+
+3. Run the generated prompt with an approval policy:
+
+   ```bash
+   uv run minicodeagent --approval ask "Run the focused failing test, diagnose the failure from its output, make the smallest fix, and rerun the test."
+   ```
+
+4. Review the structured report:
+
+   ```bash
+   uv run minicodeagent report latest
+   ```
+
+5. Explain the report in terms of active skills, requested tools, risky-tool approvals, files read, files modified, and final status.
+
+Recommended demos:
+
+- `repo-summary`: safest first demo; shows repository understanding and skill activation without requiring file writes.
+- `code-review`: best for explaining read/search behavior, findings-first output, and report review.
+- `test-fix`: strongest end-to-end demo; shows shell execution, patching, verification, safety approval, and report replay.
+
 If installed in the current environment:
 
 ```bash
@@ -203,6 +251,15 @@ uv run minicodeagent report latest
 ```
 
 `runs` lists stored run ids with status and stop reason. `report latest` prints a compact summary of the latest run, including requested tools, risky-tool denials, files read, and files modified.
+
+## Talking Points
+
+- I built the project around the agent runtime, not only model prompting. The runtime owns prompt assembly, tool validation, approval policy, memory, checkpoints, trace, and reports.
+- I added a unified tool response protocol so every tool call has a machine-readable status, error code, data payload, and human-readable text.
+- I hardened safety by separating safe tools from risky tools and making risky operations visible in both trace and report artifacts.
+- I made the agent observable: each run produces trace and report files, and the CLI can summarize them without opening JSON manually.
+- I added a lightweight skills mechanism so task-specific workflows are local markdown files instead of hard-coded prompt text.
+- I added demo templates and replay commands so the project can be shown consistently in an interview.
 
 ## Development
 
