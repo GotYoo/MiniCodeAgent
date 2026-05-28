@@ -180,6 +180,15 @@ Run artifacts are written locally:
 
 These artifacts are local debugging and review data; they are ignored by git.
 
+Review recent runs without opening JSON files:
+
+```bash
+uv run minicodeagent runs
+uv run minicodeagent report latest
+```
+
+`runs` lists stored run ids with status and stop reason. `report latest` prints a compact summary of the latest run, including requested tools, risky-tool denials, files read, and files modified.
+
 ## Development
 
 Run tests:

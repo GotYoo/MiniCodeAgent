@@ -6,10 +6,12 @@
 """
 
 import argparse
+import json
 import os
 import shutil
 import sys
 import textwrap
+from pathlib import Path
 
 from .config import load_project_env, provider_env
 from .models import AnthropicCompatibleModelClient, OllamaModelClient, OpenAICompatibleModelClient
@@ -286,7 +288,125 @@ def build_arg_parser():
     return parser
 
 
+def _run_artifact_parser(command):
+    parser = argparse.ArgumentParser(
+        prog=f"minicodeagent {command}",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--cwd", default=".", help="Workspace directory.")
+    if command == "report":
+        parser.add_argument("target", nargs="?", default="latest", help="Run id or 'latest'.")
+    return parser
+
+
+def _runs_root(cwd):
+    workspace = WorkspaceContext.build(cwd)
+    return Path(workspace.repo_root) / ".minicodeagent" / "runs"
+
+
+def _report_paths(runs_root):
+    if not runs_root.exists():
+        return []
+    return sorted(
+        [path for path in runs_root.glob("*/report.json") if path.is_file()],
+        key=lambda path: path.stat().st_mtime,
+    )
+
+
+def _load_json(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolve_report_path(cwd, target):
+    runs_root = _runs_root(cwd)
+    if target == "latest":
+        reports = _report_paths(runs_root)
+        return reports[-1] if reports else None
+    path = runs_root / str(target) / "report.json"
+    return path if path.exists() else None
+
+
+def _format_list(title, values):
+    values = [str(value) for value in (values or []) if str(value).strip()]
+    if not values:
+        return [f"{title}:", "- none"]
+    return [f"{title}:", *[f"- {value}" for value in values]]
+
+
+def format_run_report(report):
+    lines = [
+        f"Run: {report.get('run_id', '-')}",
+        f"Status: {report.get('status', '-')}",
+        f"Stop reason: {report.get('stop_reason', '-')}",
+        "",
+        "Final answer:",
+        str(report.get("final_answer", "") or "-"),
+        "",
+        *_format_list("Tools requested", report.get("tools_requested")),
+        "",
+        *_format_list("Tools used", report.get("tools_used")),
+        "",
+        "Safety:",
+        f"- risky tools requested: {', '.join(report.get('risky_tools_requested') or []) or 'none'}",
+        f"- approval denied: {int(report.get('approval_denied_count') or 0)}",
+        f"- read-only blocked: {int(report.get('read_only_blocked_count') or 0)}",
+        "",
+        *_format_list("Files read", report.get("files_read")),
+        "",
+        *_format_list("Files modified", report.get("files_modified")),
+        "",
+        f"Tool status counts: {json.dumps(report.get('tool_status_counts') or {}, sort_keys=True)}",
+        f"Tool error code counts: {json.dumps(report.get('tool_error_code_counts') or {}, sort_keys=True)}",
+    ]
+    return "\n".join(lines).strip()
+
+
+def handle_runs_command(argv):
+    args = _run_artifact_parser("runs").parse_args(argv)
+    reports = _report_paths(_runs_root(args.cwd))
+    if not reports:
+        print("No run reports found.", file=sys.stderr)
+        return 1
+    for path in reports:
+        try:
+            report = _load_json(path)
+        except Exception:
+            print(f"{path.parent.name} unreadable report")
+            continue
+        print(
+            " ".join(
+                [
+                    str(report.get("run_id") or path.parent.name),
+                    str(report.get("status") or "-"),
+                    str(report.get("stop_reason") or "-"),
+                ]
+            )
+        )
+    return 0
+
+
+def handle_report_command(argv):
+    args = _run_artifact_parser("report").parse_args(argv)
+    path = _resolve_report_path(args.cwd, args.target)
+    if path is None:
+        print("No run reports found.", file=sys.stderr)
+        return 1
+    try:
+        report = _load_json(path)
+    except Exception as exc:
+        print(f"Could not read run report: {exc}", file=sys.stderr)
+        return 1
+    print(format_run_report(report))
+    return 0
+
+
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "runs":
+        return handle_runs_command(argv[1:])
+    if argv and argv[0] == "report":
+        return handle_report_command(argv[1:])
+
     args = build_arg_parser().parse_args(argv)
     agent = build_agent(args)
 
