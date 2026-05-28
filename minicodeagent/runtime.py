@@ -1373,6 +1373,7 @@ class MiniCodeAgent:
             "resume_status": task_state.resume_status,
             "task_state": task_state.to_dict(),
             "prompt_metadata": self.last_prompt_metadata,
+            "active_skill_names": list(self.last_prompt_metadata.get("active_skill_names", [])),
             "durable_promotions": list(self.last_durable_promotions),
             "durable_rejections": list(self.last_durable_rejections),
             "durable_superseded": list(self.last_durable_superseded),

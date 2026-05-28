@@ -26,6 +26,7 @@ def test_report_command_prints_latest_structured_run_report(tmp_path, capsys):
             "read_only_blocked_count": 0,
             "files_read": ["README.md"],
             "files_modified": ["minicodeagent/cli.py"],
+            "active_skill_names": ["test-fix"],
             "tool_status_counts": {"ok": 2},
             "tool_error_code_counts": {},
         },
@@ -39,8 +40,30 @@ def test_report_command_prints_latest_structured_run_report(tmp_path, capsys):
     assert "Status: completed" in output
     assert "Tools requested:" in output
     assert "- patch_file" in output
+    assert "Active skills:" in output
+    assert "- test-fix" in output
     assert "Files modified:" in output
     assert "- minicodeagent/cli.py" in output
+
+
+def test_report_command_reads_active_skills_from_prompt_metadata(tmp_path, capsys):
+    write_report(
+        tmp_path,
+        "run_001",
+        {
+            "run_id": "run_001",
+            "status": "completed",
+            "stop_reason": "final_answer_returned",
+            "prompt_metadata": {"active_skill_names": ["repo-summary"]},
+        },
+    )
+
+    exit_code = mini_cli.main(["report", "latest", "--cwd", str(tmp_path)])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Active skills:" in output
+    assert "- repo-summary" in output
 
 
 def test_report_command_handles_missing_runs(tmp_path, capsys):

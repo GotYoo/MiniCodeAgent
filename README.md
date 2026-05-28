@@ -102,6 +102,14 @@ uv run minicodeagent demo list
 uv run minicodeagent demo show test-fix
 ```
 
+Replay a complete interview loop:
+
+```bash
+uv run minicodeagent demo show test-fix
+uv run minicodeagent --approval ask "Run the focused failing test, diagnose the failure from its output, make the smallest fix, and rerun the test."
+uv run minicodeagent report latest
+```
+
 If installed in the current environment:
 
 ```bash

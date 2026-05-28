@@ -155,3 +155,23 @@ Focus on concrete findings first.
     assert "Active skills:" in prompt
     assert "Focus on concrete findings first." in prompt
     assert agent.last_prompt_metadata["active_skill_names"] == ["code-review"]
+
+
+def test_run_report_promotes_active_skill_names(tmp_path):
+    write_skill(
+        tmp_path,
+        "repo-summary",
+        """---
+name: repo-summary
+description: Summarize repository architecture.
+---
+
+# Repo Summary
+""",
+    )
+    agent = build_agent(tmp_path, ["<final>Done.</final>"])
+
+    assert agent.ask("Summarize this repository architecture") == "Done."
+
+    report = agent.run_store.load_report(agent.current_task_state)
+    assert report["active_skill_names"] == ["repo-summary"]

@@ -18,9 +18,12 @@ def test_demo_show_prints_prompt_and_replay_steps(capsys):
     assert exit_code == 0
     assert "Demo: test-fix" in output
     assert "Prompt:" in output
+    assert "Interview flow:" in output
     assert "Replay:" in output
     assert "uv run minicodeagent" in output
+    assert "uv run minicodeagent demo show test-fix" in output
     assert "uv run minicodeagent report latest" in output
+    assert "Explain active skills, tools, safety, and files changed from the report." in output
 
 
 def test_demo_show_handles_unknown_demo(capsys):

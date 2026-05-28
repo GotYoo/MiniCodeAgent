@@ -334,6 +334,16 @@ def _format_list(title, values):
     return [f"{title}:", *[f"- {value}" for value in values]]
 
 
+def _active_skill_names(report):
+    values = report.get("active_skill_names")
+    if values:
+        return values
+    prompt_metadata = report.get("prompt_metadata")
+    if isinstance(prompt_metadata, dict):
+        return prompt_metadata.get("active_skill_names") or []
+    return []
+
+
 def format_run_report(report):
     lines = [
         f"Run: {report.get('run_id', '-')}",
@@ -346,6 +356,8 @@ def format_run_report(report):
         *_format_list("Tools requested", report.get("tools_requested")),
         "",
         *_format_list("Tools used", report.get("tools_used")),
+        "",
+        *_format_list("Active skills", _active_skill_names(report)),
         "",
         "Safety:",
         f"- risky tools requested: {', '.join(report.get('risky_tools_requested') or []) or 'none'}",
