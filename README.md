@@ -95,6 +95,13 @@ Run a one-shot task:
 uv run minicodeagent --provider deepseek "inspect the test failures and propose a fix"
 ```
 
+List interview demo templates:
+
+```bash
+uv run minicodeagent demo list
+uv run minicodeagent demo show test-fix
+```
+
 If installed in the current environment:
 
 ```bash

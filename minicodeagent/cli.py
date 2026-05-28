@@ -14,6 +14,7 @@ import textwrap
 from pathlib import Path
 
 from .config import load_project_env, provider_env
+from .demos import demo_by_name, format_demo_list, format_demo_show
 from .models import AnthropicCompatibleModelClient, OllamaModelClient, OpenAICompatibleModelClient
 from .runtime import MiniCodeAgent, SessionStore
 from .workspace import WorkspaceContext, middle
@@ -400,8 +401,34 @@ def handle_report_command(argv):
     return 0
 
 
+def handle_demo_command(argv):
+    parser = argparse.ArgumentParser(
+        prog="minicodeagent demo",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser("list")
+    show_parser = subparsers.add_parser("show")
+    show_parser.add_argument("name")
+    args = parser.parse_args(argv)
+    if args.command == "list":
+        print(format_demo_list())
+        return 0
+    if args.command == "show":
+        demo = demo_by_name(args.name)
+        if demo is None:
+            print(f"Unknown demo: {args.name}", file=sys.stderr)
+            return 1
+        print(format_demo_show(demo))
+        return 0
+    parser.print_help()
+    return 1
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "demo":
+        return handle_demo_command(argv[1:])
     if argv and argv[0] == "runs":
         return handle_runs_command(argv[1:])
     if argv and argv[0] == "report":
