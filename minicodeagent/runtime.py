@@ -18,7 +18,7 @@ from pathlib import Path
 from . import memory as memorylib
 from .context_manager import ContextManager
 from .run_store import RunStore
-from .skills import discover_skills, render_skill_summaries
+from .skills import discover_skills, render_active_skill_details, render_skill_summaries, select_relevant_skills
 from .task_state import TaskState
 from .tool_protocol import ErrorCode, error_response, is_tool_response, response_error_code, response_status, response_text
 from . import tools as toolkit
@@ -167,6 +167,7 @@ class MiniCodeAgent:
         self.last_durable_promotions = []
         self.last_durable_rejections = []
         self.last_durable_superseded = []
+        self.last_active_skills = []
         self._last_tool_result_metadata = {}
         self._current_run_tool_events = []
         self._last_prefix_refresh = {
@@ -490,6 +491,10 @@ class MiniCodeAgent:
 
         return clip("\n".join(lines), MAX_HISTORY)
 
+    def active_skill_text(self, user_message):
+        self.last_active_skills = select_relevant_skills(user_message, getattr(self, "skills", []))
+        return render_active_skill_details(self.last_active_skills)
+
     def feature_enabled(self, name):
         return bool(self.feature_flags.get(str(name), False))
 
@@ -609,6 +614,7 @@ class MiniCodeAgent:
                 "tool_signature": self.prefix_state.tool_signature,
                 "skill_count": len(getattr(self, "skills", [])),
                 "skill_names": [skill.name for skill in getattr(self, "skills", [])],
+                "active_skill_names": [skill.name for skill in getattr(self, "last_active_skills", [])],
                 "skill_signature": self.prefix_state.skill_signature,
                 "workspace_changed": refresh["workspace_changed"],
                 "skills_changed": refresh["skills_changed"],

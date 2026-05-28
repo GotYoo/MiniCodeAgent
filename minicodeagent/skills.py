@@ -7,6 +7,7 @@ stay on disk until a user or future tool chooses to inspect it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,3 +68,53 @@ def render_skill_summaries(skills):
     for skill in skills:
         lines.append(f"- {skill.name}: {skill.description}")
     return "\n".join(lines)
+
+
+def _terms(text):
+    return set(re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", str(text or "").lower()))
+
+
+def select_relevant_skills(user_message, skills, limit=2):
+    query_terms = _terms(user_message)
+    if not query_terms:
+        return []
+    scored = []
+    for index, skill in enumerate(skills or []):
+        haystack = f"{skill.name} {skill.description}"
+        skill_terms = _terms(haystack)
+        score = len(query_terms & skill_terms)
+        if str(skill.name).lower() in str(user_message or "").lower():
+            score += 3
+        if score <= 0:
+            continue
+        scored.append((score, -index, skill))
+    scored.sort(reverse=True)
+    return [skill for _, __, skill in scored[: max(0, int(limit))]]
+
+
+def _skill_body(skill):
+    text = skill.path.read_text(encoding="utf-8", errors="replace")
+    if text.startswith("---"):
+        marker = text.find("\n---", 3)
+        if marker >= 0:
+            text = text[marker + len("\n---") :]
+    return text.strip()
+
+
+def render_active_skill_details(skills, limit_chars=1200):
+    skills = list(skills or [])
+    if not skills:
+        return ""
+    lines = ["Active skills:"]
+    for skill in skills:
+        body = _skill_body(skill)
+        if len(body) > limit_chars:
+            body = body[:limit_chars] + "\n...[truncated]"
+        lines.extend(
+            [
+                f"## {skill.name}",
+                f"Description: {skill.description}",
+                body,
+            ]
+        )
+    return "\n".join(lines).strip()
