@@ -223,6 +223,11 @@ def _extract_usage_cache_details(data):
     }
 
 
+def _responses_endpoint_unsupported(status_code, body):
+    lowered = str(body or "").lower()
+    return int(status_code) in {400, 404, 501, 503} and "responses" in lowered
+
+
 class OpenAICompatibleModelClient:
     def __init__(self, model, base_url, api_key, temperature, timeout):
         self.model = model
@@ -302,6 +307,8 @@ class OpenAICompatibleModelClient:
                 break
             except urllib.error.HTTPError as exc:
                 body = exc.read().decode("utf-8", errors="replace")
+                if _responses_endpoint_unsupported(exc.code, body):
+                    return self._complete_chat_completions(prompt, max_new_tokens)
                 if exc.code >= 500 and attempt < attempts - 1:
                     time.sleep(0.5 * (attempt + 1))
                     continue
@@ -348,6 +355,61 @@ class OpenAICompatibleModelClient:
             **_extract_usage_cache_details(data),
         }
         return _extract_openai_text(data)
+
+    def _complete_chat_completions(self, prompt, max_new_tokens):
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_new_tokens,
+            "stream": False,
+        }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": OPENAI_COMPATIBLE_USER_AGENT,
+        }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        request = urllib.request.Request(
+            self.base_url + "/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                body_text = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"OpenAI-compatible chat request failed with HTTP {exc.code}: {body}") from exc
+        except (urllib.error.URLError, RemoteDisconnected) as exc:
+            raise RuntimeError(
+                "Could not reach the OpenAI-compatible chat backend.\n"
+                f"Base URL: {self.base_url}\n"
+                f"Model: {self.model}"
+            ) from exc
+
+        try:
+            data = json.loads(body_text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "OpenAI-compatible chat error: backend returned non-JSON content that could not be parsed"
+            ) from exc
+        if data.get("error"):
+            raise RuntimeError(f"OpenAI-compatible chat error: {data['error']}")
+        self.last_completion_metadata = {
+            "prompt_cache_supported": False,
+            "prompt_cache_key": None,
+            "prompt_cache_retention": None,
+            **_extract_usage_cache_details(data),
+        }
+        text = _extract_openai_text(data)
+        if text:
+            return text
+        raise RuntimeError("OpenAI-compatible chat error: could not extract text from response")
 
 
 def _extract_anthropic_text(data):

@@ -1,7 +1,9 @@
 import os
 import json
+import io
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -391,6 +393,77 @@ def test_openai_compatible_client_posts_expected_responses_payload():
             }
         ],
         "max_output_tokens": 42,
+        "stream": False,
+        "temperature": 0.2,
+    }
+
+
+def test_openai_compatible_client_falls_back_to_chat_completions_when_responses_is_unsupported():
+    captured = []
+
+    class FakeResponse:
+        headers = {"Content-Type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "<final>chat ok</final>",
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 3,
+                        "total_tokens": 15,
+                    },
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured.append(
+            {
+                "url": request.full_url,
+                "timeout": timeout,
+                "body": json.loads(request.data.decode("utf-8")),
+            }
+        )
+        if request.full_url.endswith("/responses"):
+            raise urllib.error.HTTPError(
+                request.full_url,
+                503,
+                "Service Unavailable",
+                {},
+                io.BytesIO(b'{"error":{"message":"No providers support endpoint responses"}}'),
+            )
+        return FakeResponse()
+
+    client = OpenAICompatibleModelClient(
+        model="z-ai/glm-4.7-flash:free",
+        base_url="https://api.ofox.io/v1",
+        api_key="sk-test",
+        temperature=0.2,
+        timeout=30,
+    )
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        result = client.complete("hello", 42)
+
+    assert result == "<final>chat ok</final>"
+    assert captured[0]["url"] == "https://api.ofox.io/v1/responses"
+    assert captured[1]["url"] == "https://api.ofox.io/v1/chat/completions"
+    assert captured[1]["body"] == {
+        "model": "z-ai/glm-4.7-flash:free",
+        "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 42,
         "stream": False,
         "temperature": 0.2,
     }
